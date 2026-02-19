@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Offcanvas, Form, Button } from 'react-bootstrap';
+import API_BASE_URL from '../config';
 
 const CandidateDetails = ({ candidate, onClose }) => {
     const [candidateDetails, setCandidateDetails] = useState(null);
@@ -10,7 +11,7 @@ const CandidateDetails = ({ candidate, onClose }) => {
 
     useEffect(() => {
         if (candidate) {
-            fetch(`http://localhost:3010/candidates/${candidate.id}`)
+            fetch(`${API_BASE_URL}/candidates/${candidate.id}`)
                 .then(response => response.json())
                 .then(data => setCandidateDetails(data))
                 .catch(error => console.error('Error fetching candidate details:', error));
@@ -34,7 +35,7 @@ const CandidateDetails = ({ candidate, onClose }) => {
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        fetch(`http://localhost:3010/candidates/${candidate.id}/interviews`, {
+        fetch(`${API_BASE_URL}/candidates/${candidate.id}/interviews`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'

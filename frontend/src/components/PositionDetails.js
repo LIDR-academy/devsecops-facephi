@@ -5,6 +5,7 @@ import { DragDropContext } from 'react-beautiful-dnd';
 import StageColumn from './StageColumn';
 import CandidateDetails from './CandidateDetails';
 import { useNavigate } from 'react-router-dom';
+import API_BASE_URL from '../config';
 
 const PositionsDetails = () => {
     const { id } = useParams();
@@ -16,7 +17,7 @@ const PositionsDetails = () => {
     useEffect(() => {
         const fetchInterviewFlow = async () => {
             try {
-                const response = await fetch(`http://localhost:3010/positions/${id}/interviewFlow`);
+                const response = await fetch(`${API_BASE_URL}/positions/${id}/interviewFlow`);
                 const data = await response.json();
                 const interviewSteps = data.interviewFlow.interviewFlow.interviewSteps.map(step => ({
                     title: step.name,
@@ -32,7 +33,7 @@ const PositionsDetails = () => {
 
         const fetchCandidates = async () => {
             try {
-                const response = await fetch(`http://localhost:3010/positions/${id}/candidates`);
+                const response = await fetch(`${API_BASE_URL}/positions/${id}/candidates`);
                 const candidates = await response.json();
                 setStages(prevStages =>
                     prevStages.map(stage => ({
@@ -58,7 +59,7 @@ const PositionsDetails = () => {
 
     const updateCandidateStep = async (candidateId, applicationId, newStep) => {
         try {
-            const response = await fetch(`http://localhost:3010/candidates/${candidateId}`, {
+            const response = await fetch(`${API_BASE_URL}/candidates/${candidateId}`, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json'

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Button, InputGroup, FormControl, Spinner } from 'react-bootstrap';
+import API_BASE_URL from '../config';
 
 const FileUploader = ({ onChange, onUpload }) => {
   const [file, setFile] = useState(null);
@@ -20,7 +21,7 @@ const FileUploader = ({ onChange, onUpload }) => {
       formData.append('file', file);
 
       try {
-        const res = await fetch('http://localhost:3010/upload', {
+        const res = await fetch(`${API_BASE_URL}/upload`, {
           method: 'POST',
           body: formData,
         });

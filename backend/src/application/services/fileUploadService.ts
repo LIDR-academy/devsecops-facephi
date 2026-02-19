@@ -3,7 +3,8 @@ import { Request, Response } from 'express';
 
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        cb(null, '../uploads/');
+        // UPLOAD_DIR defaults to /app/uploads inside Docker; falls back to a local path for dev
+        cb(null, process.env.UPLOAD_DIR || '../uploads/');
     },
     filename: function (req, file, cb) {
         const uniqueSuffix = Date.now();

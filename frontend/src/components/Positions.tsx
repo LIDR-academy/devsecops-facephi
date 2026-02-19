@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Container, Row, Col, Form, Button } from 'react-bootstrap';
+import API_BASE_URL from '../config';
 
 type Position = {
     id: number;
@@ -17,7 +18,7 @@ const Positions: React.FC = () => {
     useEffect(() => {
         const fetchPositions = async () => {
             try {
-                const response = await fetch('http://localhost:3010/positions');
+                const response = await fetch(`${API_BASE_URL}/positions`);
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
                 }

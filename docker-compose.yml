@@ -1,12 +1,102 @@
-version: "3.1"
+# ---------------------------------------------------------------------------
+# Named volumes — data persists across container restarts
+# ---------------------------------------------------------------------------
+volumes:
+  postgres_data:
+  uploads_data:
 
+# ---------------------------------------------------------------------------
+# Networks
+# ---------------------------------------------------------------------------
+networks:
+  # app_net: backend + db only. Never exposed to the host.
+  app_net:
+    driver: bridge
+  # public_net: frontend (nginx) only, reachable from the host.
+  public_net:
+    driver: bridge
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
 services:
+
+  # --------------------------------------------------------------------------
+  # Database
+  # --------------------------------------------------------------------------
   db:
-    image: postgres
-    restart: always
+    image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app_net
+    # The DB port is intentionally NOT exposed to the host.
+    # Uncomment the next two lines only for local debugging:
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # --------------------------------------------------------------------------
+  # Backend (Node.js / Express / Prisma)
+  # --------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Run Prisma migrations before starting the server.
+    # `migrate deploy` is idempotent and safe to run on every startup.
+    command: >
+      sh -c "npx prisma migrate deploy && node dist/index.js"
+    environment:
+      # DATABASE_URL uses the Docker service name "db" instead of localhost
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      # Directory where Multer stores uploaded files (must match the named volume mount)
+      UPLOAD_DIR: /app/uploads
+      # CORS: allow the frontend origin (nginx serves on port 3000 of the host)
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      NODE_ENV: production
+    volumes:
+      - uploads_data:/app/uploads
+    networks:
+      - app_net
+      - public_net
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # --------------------------------------------------------------------------
+  # Frontend (React SPA served by Nginx)
+  # --------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Empty string → nginx proxies /candidates, /positions, /upload to backend.
+        # Override with an absolute URL for deployments where nginx proxy is not used.
+        REACT_APP_API_URL: ${REACT_APP_API_URL:-}
+    restart: unless-stopped
     ports:
-      - ${DB_PORT}:5432
+      - "3000:80"
+    networks:
+      - public_net
+    depends_on:
+      backend:
+        condition: service_healthy

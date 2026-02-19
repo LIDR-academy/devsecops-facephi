@@ -31,9 +31,11 @@ app.use((req, res, next) => {
   next();
 });
 
-// Middleware para permitir CORS desde http://localhost:3000
+// Allow the origin to be configured at runtime so the backend can be reached
+// from any deployment environment without rebuilding the image.
+const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:3000';
 app.use(cors({
-  origin: 'http://localhost:4000',
+  origin: corsOrigin,
   credentials: true
 }));
 
