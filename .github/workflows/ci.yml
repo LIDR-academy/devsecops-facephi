@@ -1,131 +1,229 @@
 name: CI/CD Pipeline
 
 on:
+  push:
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
+
+env:
+  NODE_VERSION: "20"
+  AWS_REGION: us-east-1
+
+# Cancel in-flight runs for the same branch/PR when a new push arrives
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  # ============================================================================
+  # Job 1: Lint + Unit tests — Backend
+  # ============================================================================
+  lint-test-backend:
+    name: Lint & Test — Backend
     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v2
-        with:
-          node-version: '16'
-
-      - name: Install dependencies
-        run: |
-          cd backend
-          npm install
-
-      - name: Run tests
-        run: |
-          cd backend
-          npm test
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.event_name == 'pull_request'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Configure AWS Credentials
+    # PostgreSQL service container for integration tests
+    services:
+      postgres:
+        image: postgres:16-alpine
         env:
+          POSTGRES_USER: ltiuser
+          POSTGRES_PASSWORD: ltipassword
+          POSTGRES_DB: ltidb_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ltiuser -d ltidb_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://ltiuser:ltipassword@localhost:5432/ltidb_test
+        run: npx prisma generate
+
+      - name: Run Prisma migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://ltiuser:ltipassword@localhost:5432/ltidb_test
+        run: npx prisma migrate deploy
+
+      - name: Run ESLint
+        working-directory: backend
+        run: npx eslint src/
+
+      - name: Run unit tests
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://ltiuser:ltipassword@localhost:5432/ltidb_test
+          NODE_ENV: test
+        run: npm test -- --coverage --ci
+
+  # ============================================================================
+  # Job 2: Build — Frontend
+  # ============================================================================
+  build-frontend:
+    name: Build — Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build production bundle
+        working-directory: frontend
+        env:
+          # Disable treating warnings as errors in CI
+          CI: false
+          # Empty → Nginx reverse proxy handles API calls (matches docker-compose setup)
+          REACT_APP_API_URL: ""
+        run: npm run build
+
+  # ============================================================================
+  # Job 3: Build & Push Docker images to ECR
+  # Only runs on push to main (after CI jobs pass)
+  # ============================================================================
+  docker-build-push:
+    name: Docker Build & Push — ECR
+    runs-on: ubuntu-latest
+    needs: [lint-test-backend, build-frontend]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.ECR_REGISTRY }}/lti-backend:latest
+            ${{ secrets.ECR_REGISTRY }}/lti-backend:${{ github.sha }}
+          cache-from: type=registry,ref=${{ secrets.ECR_REGISTRY }}/lti-backend:latest
+          cache-to: type=inline
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          build-args: REACT_APP_API_URL=
+          tags: |
+            ${{ secrets.ECR_REGISTRY }}/lti-frontend:latest
+            ${{ secrets.ECR_REGISTRY }}/lti-frontend:${{ github.sha }}
+          cache-from: type=registry,ref=${{ secrets.ECR_REGISTRY }}/lti-frontend:latest
+          cache-to: type=inline
+
+  # ============================================================================
+  # Job 4: Deploy to EC2 via SSH
+  # Only runs on push to main after Docker images are pushed
+  # ============================================================================
+  deploy-ec2:
+    name: Deploy — EC2
+    runs-on: ubuntu-latest
+    needs: docker-build-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+
+      - name: Add EC2 host to known_hosts
+        run: ssh-keyscan -H ${{ secrets.EC2_INSTANCE }} >> ~/.ssh/known_hosts
+
+      - name: Copy docker-compose.yml to EC2
+        run: |
+          scp docker-compose.yml ec2-user@${{ secrets.EC2_INSTANCE }}:~/docker-compose.yml
+
+      - name: Deploy on EC2
+        env:
+          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_ACCESS_KEY }}
-          AWS_REGION: 'us-east-1'
+          AWS_REGION: ${{ env.AWS_REGION }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          GITHUB_SHA: ${{ github.sha }}
         run: |
-          echo "Configuring AWS CLI"
-          aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
-          aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
-          aws configure set region $AWS_REGION
+          ssh ec2-user@${{ secrets.EC2_INSTANCE }} \
+            "AWS_ACCESS_KEY_ID='${AWS_ACCESS_KEY_ID}' \
+             AWS_SECRET_ACCESS_KEY='${AWS_SECRET_ACCESS_KEY}' \
+             AWS_DEFAULT_REGION='${AWS_REGION}' \
+             DB_USER='${DB_USER}' \
+             DB_PASSWORD='${DB_PASSWORD}' \
+             DB_NAME='${DB_NAME}' \
+             ECR_REGISTRY='${ECR_REGISTRY}' \
+             bash -s" << 'REMOTE'
+              set -euo pipefail
 
-      - name: Upload to S3
-        run: |
-          aws s3 cp backend/ s3://mi-ec2-con-github-actions/backend/ --recursive
+              # Authenticate Docker with ECR
+              aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
+                | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
 
-      - name: Add EC2 Host Key
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -H ${{ secrets.EC2_INSTANCE }} >> ~/.ssh/known_hosts
+              # Write .env for docker-compose
+              cat > ~/app.env << EOF
+          DB_USER=${DB_USER}
+          DB_PASSWORD=${DB_PASSWORD}
+          DB_NAME=${DB_NAME}
+          DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+          CORS_ORIGIN=http://localhost:3000
+          EOF
 
-      - name: Deploy to EC2
-        env:
-            EC2_INSTANCE: ${{ secrets.EC2_INSTANCE }}
-            EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-        run: |
-            echo "Deploying to EC2 instance..."
-            echo "$EC2_SSH_PRIVATE_KEY" > private_key.pem
-            cat private_key.pem
-            chmod 600 private_key.pem  
-          
-            ssh -o StrictHostKeyChecking=no -i private_key.pem ec2-user@${{ secrets.EC2_INSTANCE }} << 'EOF'
-                export AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_ID }}
-                export AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_ACCESS_KEY }}
-                export AWS_REGION='us-east-1'
+              # Pull latest images and redeploy
+              cd ~
+              env $(cat ~/app.env | xargs) docker compose pull
+              env $(cat ~/app.env | xargs) docker compose up -d --remove-orphans
 
-                # Install Nginx if not already installed
-                if ! command -v nginx &> /dev/null; then
-                sudo yum update
-                sudo yum install -y nginx
-                fi
-
-                if ! command -v npm &> /dev/null; then
-                curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-                source ~/.bashrc
-                nvm install --lts
-                node -e "console.log('Running Node.js ' + process.version)"
-                fi
-
-                # Ensure Nginx config directory exists
-                sudo mkdir -p /etc/nginx/sites-available
-                sudo mkdir -p /etc/nginx/sites-enabled
-
-                # Configure Nginx as a reverse proxy using a one-liner
-                echo 'server {
-                    listen 80;
-                    server_name ${{ secrets.EC2_INSTANCE }};
-                    
-                    location / {
-                        proxy_pass http://localhost:8080;
-                        proxy_set_header Host $host;
-                        proxy_set_header X-Real-IP $remote_addr;
-                        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                        proxy_set_header X-Forwarded-Proto $scheme;
-                    }
-                }' | sudo tee /etc/nginx/conf.d/app.conf > /dev/null
-
-                # Enable the site configuration
-                sudo ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
-
-                # Restart Nginx to apply the new configuration
-                sudo systemctl restart nginx
-
-                # Install PM2 if not already installed
-                if ! command -v pm2 &> /dev/null; then
-                npm install -g pm2
-                fi
-
-                # Stop the application if it's running
-                pm2 stop all || true
-
-                # Create the directory if it doesn't exist
-                mkdir -p /home/ec2-user/backend
-                cd /home/ec2-user/backend
-
-                # Download the code from S3
-                aws s3 cp s3://mi-ec2-con-github-actions/backend/ . --recursive
-
-                # Install dependencies and run the application with PM2 on port 8080
-                npm install
-                npm run build
-                pm2 start npm --name "my-app" -- start -- --port 8080
-            EOF
+              # Cleanup dangling images
+              docker image prune -f
+          REMOTE
