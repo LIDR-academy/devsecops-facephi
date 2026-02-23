@@ -1,8 +1,8 @@
-version: "3.1"
+version: "3.8"
 
 services:
   db:
-    image: postgres
+    image: postgres:16
     restart: always
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -10,3 +10,45 @@ services:
       POSTGRES_DB: ${DB_NAME}
     ports:
       - ${DB_PORT}:5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    working_dir: /usr/src/app
+    command: ["npm", "run", "dev"]
+    volumes:
+      - ./backend:/usr/src/app
+      - backend_node_modules:/usr/src/app/node_modules
+    environment:
+      # Prisma connection string usando el servicio db
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}?schema=public
+      NODE_ENV: development
+    depends_on:
+      - db
+    ports:
+      - "3010:3010"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    working_dir: /usr/src/app
+    volumes:
+      - ./frontend:/usr/src/app
+      - frontend_node_modules:/usr/src/app/node_modules
+    environment:
+      # URL interna del backend para las llamadas desde el contenedor
+      REACT_APP_API_URL: http://backend:3010
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
+  backend_node_modules:
+  frontend_node_modules:
+

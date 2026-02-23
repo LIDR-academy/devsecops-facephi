@@ -1,0 +1,19 @@
+FROM node:18-alpine
+
+WORKDIR /usr/src/app
+
+# Instala dependencias mínimas del sistema si fueran necesarias
+RUN apk add --no-cache bash
+
+# Instala dependencias de npm utilizando los manifests del frontend
+COPY package*.json ./
+RUN npm install
+
+# En desarrollo montaremos el código fuente como volumen desde el host.
+
+# Expone el puerto del dev server de CRA
+EXPOSE 3000
+
+# Comando por defecto: modo desarrollo de CRA
+CMD ["npm", "start"]
+

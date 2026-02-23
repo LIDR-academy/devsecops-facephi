@@ -1,0 +1,19 @@
+FROM node:18-alpine
+
+WORKDIR /usr/src/app
+
+# Instala dependencias del sistema mínimas (por si Prisma u otras librerías lo requieren)
+RUN apk add --no-cache bash
+
+# Instala dependencias de npm utilizando los manifests del backend
+COPY package*.json ./
+RUN npm install
+
+# En desarrollo montaremos el código fuente como volumen desde el host.
+
+# Expone el puerto de la API en el contenedor
+EXPOSE 3010
+
+# Comando por defecto: modo desarrollo con ts-node-dev
+CMD ["npm", "run", "dev"]
+

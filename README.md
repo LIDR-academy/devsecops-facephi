@@ -91,15 +91,20 @@ El servidor backend estará corriendo en http://localhost:3010 y el frontend est
 
 ## Docker y PostgreSQL
 
-Este proyecto usa Docker para ejecutar una base de datos PostgreSQL. Así es cómo ponerlo en marcha:
+Este proyecto usa Docker para ejecutar una base de datos PostgreSQL y, opcionalmente, todo el stack (frontend, backend y base de datos) en modo desarrollo. Así es cómo ponerlo en marcha:
 
 Instala Docker en tu máquina si aún no lo has hecho. Puedes descargarlo desde aquí.
 Navega al directorio raíz del proyecto en tu terminal.
-Ejecuta el siguiente comando para iniciar el contenedor Docker:
+
+### Solo base de datos PostgreSQL
+
+Si solo quieres levantar la base de datos PostgreSQL (por ejemplo, para conectarte desde un backend ejecutándose en tu máquina), puedes usar:
+
 ```
-docker-compose up -d
+docker-compose up -d db
 ```
-Esto iniciará una base de datos PostgreSQL en un contenedor Docker. La bandera -d corre el contenedor en modo separado, lo que significa que se ejecuta en segundo plano.
+
+Esto iniciará una base de datos PostgreSQL en un contenedor Docker. La bandera `-d` corre el contenedor en modo separado, lo que significa que se ejecuta en segundo plano.
 
 Para acceder a la base de datos PostgreSQL, puedes usar cualquier cliente PostgreSQL con los siguientes detalles de conexión:
  - Host: localhost
@@ -110,10 +115,51 @@ Para acceder a la base de datos PostgreSQL, puedes usar cualquier cliente Postgr
 
 Por favor, reemplaza User, Password y Database con el usuario, la contraseña y el nombre de la base de datos reales especificados en tu archivo .env.
 
-Para detener el contenedor Docker, ejecuta el siguiente comando:
+Para detener el contenedor Docker de la base de datos, ejecuta el siguiente comando:
 ```
 docker-compose down
 ```
+
+### Stack completo en modo desarrollo (frontend + backend + PostgreSQL)
+
+Si quieres levantar **todo el entorno de desarrollo en contenedores** (sin instalar Node ni PostgreSQL en el host), asegúrate primero de tener un archivo `.env` en la raíz del proyecto (puedes partir de `.env.example`) definiendo al menos:
+
+- `DB_USER`
+- `DB_PASSWORD`
+- `DB_NAME`
+- `DB_PORT`
+
+Luego, desde la raíz del proyecto, ejecuta:
+
+```
+docker-compose up --build
+```
+
+Esto levantará:
+
+- El servicio `db` (PostgreSQL), accesible desde el host en `localhost:${DB_PORT}`.
+- El servicio `backend`, ejecutando el servidor Express en `http://localhost:3010`.
+- El servicio `frontend`, ejecutando la app React en `http://localhost:3000`.
+
+El código fuente de `backend/` y `frontend/` se monta como volúmenes dentro de los contenedores, por lo que los cambios que hagas en los archivos del proyecto en tu máquina se reflejan automáticamente (hot reload).
+
+Para detener todos los servicios:
+
+```
+docker-compose down
+```
+
+### Migraciones y seed de Prisma dentro del contenedor
+
+Con los servicios levantados mediante `docker-compose`, puedes aplicar las migraciones de Prisma y poblar la base de datos directamente dentro del contenedor del backend. Desde la raíz del proyecto:
+
+```sh
+docker-compose exec backend npx prisma generate
+docker-compose exec backend npx prisma migrate dev
+docker-compose exec backend npx ts-node seed.ts
+```
+
+Estas órdenes usan la variable `DATABASE_URL` configurada en el servicio `backend` para conectarse al PostgreSQL que corre en el contenedor `db`.
 
 Para generar la base de datos utilizando Prisma, sigue estos pasos:
 
