@@ -1,0 +1,19 @@
+name: SAST Template
+
+on:
+  workflow_dispatch:
+
+jobs:
+  code_scanning_template:
+    name: Code scanning (template)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Placeholder for SAST tool
+        run: |
+          echo "Add your SAST tool here (e.g., CodeQL, Semgrep)."
+          echo "Configure it to scan both backend and frontend source trees."
+
