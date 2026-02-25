@@ -1,0 +1,17 @@
+# =============================================================================
+# Grafana — Dashboard provisioning provider
+# Loads all JSON dashboards from the /dashboards directory
+# =============================================================================
+
+apiVersion: 1
+
+providers:
+  - name: default
+    orgId: 1
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

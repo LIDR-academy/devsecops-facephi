@@ -1,0 +1,62 @@
+# =============================================================================
+# Promtail — Log collector configuration
+# Reads Docker container logs and ships them to Loki
+# =============================================================================
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+
+  # ---------------------------------------------------------------------------
+  # Docker container logs via /var/lib/docker/containers
+  # Automatically discovers all running containers and tags by name/image
+  # ---------------------------------------------------------------------------
+  - job_name: docker-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 10s
+        filters:
+          - name: status
+            values: ["running"]
+    relabel_configs:
+      # Use container name as the stream label
+      - source_labels: [__meta_docker_container_name]
+        regex: "/(.*)"
+        target_label: container
+      # Tag with the Docker image name
+      - source_labels: [__meta_docker_container_image]
+        target_label: image
+      # Compose project name (set by Docker Compose)
+      - source_labels: [__meta_docker_container_label_com_docker_compose_project]
+        target_label: compose_project
+      # Compose service name
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: service
+      # Stream (stdout / stderr)
+      - source_labels: [__meta_docker_container_log_stream]
+        target_label: stream
+
+    pipeline_stages:
+      # Parse JSON log lines emitted by Node.js (pino / winston)
+      - json:
+          expressions:
+            level: level
+            msg: msg
+            time: time
+          drop_malformed: true
+      # Promote the log level label for easy filtering in Grafana
+      - labels:
+          level:
+      # Multiline support: collapse stack traces into a single log entry
+      - multiline:
+          firstline: '^\d{4}-\d{2}-\d{2}|^\{'
+          max_wait_time: 3s

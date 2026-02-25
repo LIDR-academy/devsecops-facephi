@@ -1,0 +1,41 @@
+# =============================================================================
+# Prometheus — Scrape configuration
+# =============================================================================
+
+global:
+  scrape_interval: 15s       # How frequently to scrape targets
+  evaluation_interval: 15s   # How frequently to evaluate rules
+  scrape_timeout: 10s
+
+# ---------------------------------------------------------------------------
+# Scrape jobs
+# ---------------------------------------------------------------------------
+scrape_configs:
+
+  # Prometheus self-monitoring
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # cAdvisor — Docker container resource metrics
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+    metrics_path: /metrics
+    scheme: http
+
+  # Node Exporter — host-level OS/hardware metrics
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # postgres-exporter — PostgreSQL internal metrics
+  - job_name: postgres-exporter
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  # Backend — expose /metrics if prom-client is added in the future
+  # - job_name: backend
+  #   static_configs:
+  #     - targets: ["backend:8080"]
+  #   metrics_path: /metrics
