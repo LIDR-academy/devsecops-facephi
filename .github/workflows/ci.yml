@@ -17,11 +17,57 @@ concurrency:
 
 jobs:
   # ============================================================================
+  # Job 0: Dependency vulnerability scan — Backend & Frontend
+  # Fails fast on high/critical CVEs before any build or test runs.
+  # ============================================================================
+  dependency-check:
+    name: Dependency Check — npm audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Audit backend dependencies
+        working-directory: backend
+        run: |
+          npm audit --audit-level=high --json > audit-backend.json || (cat audit-backend.json && exit 1)
+
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: |
+          npm audit --audit-level=high --json > audit-frontend.json || (cat audit-frontend.json && exit 1)
+
+      - name: Upload audit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit-${{ github.sha }}
+          path: |
+            backend/audit-backend.json
+            frontend/audit-frontend.json
+          retention-days: 30
+
+  # ============================================================================
   # Job 1: Lint + Unit tests — Backend
   # ============================================================================
   lint-test-backend:
     name: Lint & Test — Backend
     runs-on: ubuntu-latest
+    needs: [dependency-check]
 
     # PostgreSQL service container for integration tests
     services:
@@ -83,6 +129,7 @@ jobs:
   build-frontend:
     name: Build — Frontend
     runs-on: ubuntu-latest
+    needs: [dependency-check]
 
     steps:
       - name: Checkout code

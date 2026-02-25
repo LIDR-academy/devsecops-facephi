@@ -10,7 +10,9 @@
         "test": "jest",
         "prisma:init": "npx prisma init",
         "prisma:generate": "npx prisma generate",
-        "start:prod": "npm run build && npm start"
+        "start:prod": "npm run build && npm start",
+        "audit": "npm audit --audit-level=high",
+        "audit:report": "npm audit --json > audit-report.json; exit 0"
     },
     "keywords": [],
     "author": "",

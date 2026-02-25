@@ -1,4 +1,9 @@
 {
+  "scripts": {
+    "audit:backend": "cd backend && npm audit --audit-level=high",
+    "audit:frontend": "cd frontend && npm audit --audit-level=high",
+    "audit": "npm run audit:backend && npm run audit:frontend"
+  },
   "dependencies": {
     "dotenv": "^16.4.5"
   },
