@@ -9,11 +9,7 @@ volumes:
 # Networks
 # ---------------------------------------------------------------------------
 networks:
-  # app_net: backend + db only. Never exposed to the host.
-  app_net:
-    driver: bridge
-  # public_net: frontend (nginx) only, reachable from the host.
-  public_net:
+  lti-network:
     driver: bridge
 
 # ---------------------------------------------------------------------------
@@ -34,11 +30,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - app_net
-    # The DB port is intentionally NOT exposed to the host.
-    # Uncomment the next two lines only for local debugging:
-    # ports:
-    #   - "127.0.0.1:5432:5432"
+      - lti-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 10s
@@ -54,10 +46,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    # Run Prisma migrations before starting the server.
-    # `migrate deploy` is idempotent and safe to run on every startup.
-    command: >
-      sh -c "npx prisma migrate deploy && node dist/index.js"
+    networks:
+      - lti-network
     environment:
       # DATABASE_URL uses the Docker service name "db" instead of localhost
       DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
@@ -68,9 +58,6 @@ services:
       NODE_ENV: production
     volumes:
       - uploads_data:/app/uploads
-    networks:
-      - app_net
-      - public_net
     depends_on:
       db:
         condition: service_healthy
@@ -93,10 +80,36 @@ services:
         # Override with an absolute URL for deployments where nginx proxy is not used.
         REACT_APP_API_URL: ${REACT_APP_API_URL:-}
     restart: unless-stopped
+    networks:
+      - lti-network
     ports:
       - "3100:80"
-    networks:
-      - public_net
     depends_on:
       backend:
         condition: service_healthy
+
+  # --------------------------------------------------------------------------
+  # Locust — load / stress testing
+  # Only starts with: docker compose --profile load-test up
+  # UI available at http://localhost:8089
+  # --------------------------------------------------------------------------
+  locust:
+    build:
+      context: ./load-tests
+      dockerfile: Dockerfile
+    networks:
+      - lti-network
+    ports:
+      - "8089:8089"
+    volumes:
+      - ./load-tests:/mnt/locust
+    command: >
+      -f /mnt/locust/locustfile.py
+      --host http://backend:8080
+    depends_on:
+      backend:
+        condition: service_healthy
+    profiles:
+      - load-test
+
+
