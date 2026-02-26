@@ -1,19 +1,45 @@
-name: SAST Template
+name: SAST — SonarQube
 
 on:
+  push:
+    branches: [main, main-b]
+  pull_request:
+    branches: [main, main-b]
   workflow_dispatch:
 
 jobs:
-  code_scanning_template:
-    name: Code scanning (template)
+  sonarqube:
+    name: SonarQube analysis
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # Full history needed for accurate blame / new-code detection
+          fetch-depth: 0
 
-      - name: Placeholder for SAST tool
-        run: |
-          echo "Add your SAST tool here (e.g., CodeQL, Semgrep)."
-          echo "Configure it to scan both backend and frontend source trees."
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
 
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Generate backend test coverage
+        working-directory: backend
+        run: npm test -- --coverage --watchAll=false --forceExit
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          # SONAR_TOKEN and SONAR_HOST_URL must be added as repository secrets:
+          #   Settings > Secrets and variables > Actions
+          #   SONAR_TOKEN  — token generated in SonarQube (My Account > Security)
+          #   SONAR_HOST_URL — e.g. https://sonarcloud.io or your self-hosted URL
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
