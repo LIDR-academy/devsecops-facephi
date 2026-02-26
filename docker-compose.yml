@@ -19,6 +19,8 @@ services:
       dockerfile: Dockerfile.dev
     working_dir: /usr/src/app
     command: ["npm", "run", "dev"]
+    networks:
+      - default
     volumes:
       - ./backend:/usr/src/app
       - backend_node_modules:/usr/src/app/node_modules
@@ -36,6 +38,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile.dev
     working_dir: /usr/src/app
+    networks:
+      - default
     volumes:
       - ./frontend:/usr/src/app
       - frontend_node_modules:/usr/src/app/node_modules
@@ -149,6 +153,24 @@ services:
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
     ports:
       - "9100:9100"
+    networks:
+      - default
+
+  # ---------------------------------------------------------------------------
+  # Load testing — start with: docker compose --profile loadtest up -d
+  # UI → http://localhost:8089
+  # ---------------------------------------------------------------------------
+
+  locust:
+    image: locustio/locust:2.32.3
+    profiles: [loadtest]
+    volumes:
+      - ./locust:/mnt/locust
+    command: -f /mnt/locust/locustfile.py --host http://backend:3010
+    ports:
+      - "8089:8089"
+    depends_on:
+      - backend
     networks:
       - default
 
