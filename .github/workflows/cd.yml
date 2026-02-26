@@ -44,6 +44,63 @@ jobs:
             frontend
           echo "FRONTEND_IMAGE=${IMAGE_NAME}:${{ github.sha }}" >> $GITHUB_ENV
 
+      # ── Container scanning: bloquea el deploy si la imagen tiene CVEs críticos ──
+      - name: Trivy scan — backend image (SARIF)
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          image-ref: ${{ env.BACKEND_IMAGE }}
+          format: "sarif"
+          output: "trivy-backend-image.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+          ignore-unfixed: true
+          vuln-type: "library,os"
+
+      - name: Upload backend image SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-backend-image.sarif
+          category: trivy-backend-image
+
+      - name: Trivy gate — backend image CRITICAL
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          image-ref: ${{ env.BACKEND_IMAGE }}
+          format: "table"
+          severity: "CRITICAL"
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "library,os"
+
+      - name: Trivy scan — frontend image (SARIF)
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          image-ref: ${{ env.FRONTEND_IMAGE }}
+          format: "sarif"
+          output: "trivy-frontend-image.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+          ignore-unfixed: true
+          vuln-type: "library,os"
+
+      - name: Upload frontend image SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-frontend-image.sarif
+          category: trivy-frontend-image
+
+      - name: Trivy gate — frontend image CRITICAL
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          image-ref: ${{ env.FRONTEND_IMAGE }}
+          format: "table"
+          severity: "CRITICAL"
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "library,os"
+
       - name: Push images to GHCR
         run: |
           docker push "$BACKEND_IMAGE"

@@ -1,0 +1,227 @@
+name: Dependency Check (SCA)
+
+# Ejecuta un análisis completo de dependencias cada semana y en cada push a main.
+# Combina npm audit (base de datos de npm advisories) con Trivy filesystem scan
+# (base de datos OSV + NVD) para mayor cobertura de CVEs.
+
+on:
+  schedule:
+    # Todos los lunes a las 07:00 UTC
+    - cron: "0 7 * * 1"
+  push:
+    branches:
+      - main
+    paths:
+      - "**/package.json"
+      - "**/package-lock.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write  # necesario para subir resultados SARIF a GitHub Security
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 1 — npm audit: análisis de advisories del registro de npm
+  # ─────────────────────────────────────────────────────────────────────────────
+  npm_audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace:
+          - name: backend
+            path: backend
+          - name: frontend
+            path: frontend
+
+    defaults:
+      run:
+        working-directory: ${{ matrix.workspace.path }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: ${{ matrix.workspace.path }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit (JSON)
+        id: audit
+        run: |
+          npm audit --json > ../audit-${{ matrix.workspace.name }}.json 2>/dev/null
+          exit_code=$?
+          # Capturar resumen de hallazgos para el log
+          echo "## npm audit — ${{ matrix.workspace.name }}" >> $GITHUB_STEP_SUMMARY
+          node -e "
+            const r = require('../audit-${{ matrix.workspace.name }}.json');
+            const v = r.metadata?.vulnerabilities ?? {};
+            const total = Object.values(v).reduce((a,b) => a+b, 0);
+            console.log('| Severidad | Cantidad |');
+            console.log('|---|---|');
+            ['critical','high','moderate','low','info'].forEach(s => {
+              if (v[s]) console.log('| ' + s + ' | ' + v[s] + ' |');
+            });
+            console.log('\\n**Total:** ' + total);
+          " >> $GITHUB_STEP_SUMMARY || true
+          exit $exit_code
+        continue-on-error: true
+
+      - name: Upload audit JSON artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-${{ matrix.workspace.name }}
+          path: audit-${{ matrix.workspace.name }}.json
+          retention-days: 90
+
+      # Falla el job si hay CVEs críticos en deps de producción
+      - name: Fail on critical vulnerabilities
+        run: npm audit --production --audit-level=critical
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 2 — Trivy filesystem: análisis de CVEs con OSV + NVD (cobertura adicional)
+  # ─────────────────────────────────────────────────────────────────────────────
+  trivy_filesystem:
+    name: Trivy filesystem scan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace:
+          - name: backend
+            path: backend
+          - name: frontend
+            path: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: ${{ matrix.workspace.path }}/package-lock.json
+
+      - name: Install dependencies (${{ matrix.workspace.name }})
+        run: npm ci
+        working-directory: ${{ matrix.workspace.path }}
+
+      - name: Trivy — scan filesystem (SARIF)
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          scan-type: "fs"
+          scan-ref: ${{ matrix.workspace.path }}
+          format: "sarif"
+          output: "trivy-${{ matrix.workspace.name }}.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"  # no falla aquí; el gate está en el paso siguiente
+          ignore-unfixed: true
+          vuln-type: "library"
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-${{ matrix.workspace.name }}.sarif
+          category: trivy-${{ matrix.workspace.name }}
+
+      - name: Trivy — gate CRITICAL (bloquea pipeline)
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          scan-type: "fs"
+          scan-ref: ${{ matrix.workspace.path }}
+          format: "table"
+          severity: "CRITICAL"
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "library"
+
+      - name: Upload Trivy SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-${{ matrix.workspace.name }}
+          path: trivy-${{ matrix.workspace.name }}.sarif
+          retention-days: 90
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 3 — Resumen consolidado: abre una GitHub Issue si hay hallazgos nuevos
+  # ─────────────────────────────────────────────────────────────────────────────
+  report:
+    name: Report
+    runs-on: ubuntu-latest
+    needs: [npm_audit, trivy_filesystem]
+    if: always() && github.event_name == 'schedule'
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Download audit artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: npm-audit-*
+          merge-multiple: true
+
+      - name: Generate consolidated summary
+        id: summary
+        run: |
+          echo "# Weekly Dependency Check Report — $(date -u +%Y-%m-%d)" > summary.md
+          echo "" >> summary.md
+          echo "| Workspace | Critical | High | Moderate | Low |" >> summary.md
+          echo "|---|---|---|---|---|" >> summary.md
+          for f in audit-*.json; do
+            name="${f#audit-}"; name="${name%.json}"
+            node -e "
+              const r = require('./$f');
+              const v = r.metadata?.vulnerabilities ?? {};
+              process.stdout.write('| $name | ' + (v.critical??0) + ' | ' + (v.high??0) + ' | ' + (v.moderate??0) + ' | ' + (v.low??0) + ' |\n');
+            " >> summary.md 2>/dev/null || echo "| $name | error | - | - | - |" >> summary.md
+          done
+          echo "summary_file=summary.md" >> $GITHUB_OUTPUT
+
+      - name: Create or update tracking issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('summary.md', 'utf8');
+            const title = `[SCA] Dependency Check Report — ${new Date().toISOString().split('T')[0]}`;
+
+            // Buscar issue abierto existente de la semana anterior
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'dependency-check',
+              state: 'open',
+            });
+
+            if (issues.data.length > 0) {
+              // Actualizar el existente
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues.data[0].number,
+                body: body,
+              });
+            } else {
+              // Crear nuevo issue
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['dependency-check', 'security'],
+              });
+            }

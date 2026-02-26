@@ -39,9 +39,28 @@ jobs:
       - name: Test backend
         run: npm test
 
-      - name: Dependency audit (backend)
+      # Gate 1 — bloquea el pipeline ante cualquier CVE crítico en deps de producción (SEC-015)
+      - name: Dependency audit (backend) — block on critical
+        run: npm audit --production --audit-level=critical
+
+      # Gate 2 — falla visible ante CVEs altos; no bloquea todavía para dar margen
+      # de remediación, pero el resultado queda registrado en el log del pipeline.
+      # Eliminar continue-on-error una vez que npm audit --audit-level=high pase limpio.
+      - name: Dependency audit (backend) — warn on high
         run: npm audit --production --audit-level=high
         continue-on-error: true
+
+      - name: Upload backend audit report
+        if: always()
+        run: npm audit --production --json > ../audit-backend.json 2>/dev/null || true
+
+      - name: Upload backend audit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-backend
+          path: audit-backend.json
+          retention-days: 30
 
   frontend_ci:
     name: Frontend CI
@@ -73,6 +92,24 @@ jobs:
       - name: Lint frontend
         run: npx react-scripts lint
 
-      - name: Dependency audit (frontend)
-        run: npm audit --production --audit-level=high
+      # Gate 1 — bloquea ante CVEs críticos (SEC-015)
+      - name: Dependency audit (frontend) — block on critical
+        run: npm audit --audit-level=critical
+
+      # Gate 2 — react-scripts tiene CVEs conocidos de severidad high no corregibles
+      # upstream; se advierte pero no bloquea. Revisar cuando se actualice react-scripts.
+      - name: Dependency audit (frontend) — warn on high
+        run: npm audit --audit-level=high
         continue-on-error: true
+
+      - name: Upload frontend audit report
+        if: always()
+        run: npm audit --json > ../audit-frontend.json 2>/dev/null || true
+
+      - name: Upload frontend audit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-frontend
+          path: audit-frontend.json
+          retention-days: 30
