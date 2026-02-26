@@ -208,6 +208,68 @@ POST http://localhost:3010/candidates
 }
 ```
 
+## Monitorización (Prometheus + Grafana + Loki)
+
+El proyecto incluye un stack de monitorización completo dockerizado como perfil `monitoring`. Cubre métricas de infraestructura, métricas de la aplicación Node.js y logs de todos los contenedores.
+
+### Componentes
+
+| Servicio | Puerto | Descripción |
+|---|---|---|
+| **Grafana** | `3001` | Dashboards unificados (métricas + logs) |
+| **Prometheus** | `9090` | Scraping y almacenamiento de métricas |
+| **cAdvisor** | `8081` | Métricas de contenedores Docker en tiempo real |
+| **Node Exporter** | `9100` | Métricas del host (CPU, RAM, disco, red) |
+| **Loki** | `3100` | Agregación de logs de contenedores |
+| **Promtail** | — | Agente que envía logs Docker → Loki |
+
+### Cómo arrancar el stack de monitorización
+
+1. Asegúrate de que el fichero `.env` tiene las credenciales de Grafana:
+   ```sh
+   GRAFANA_ADMIN_USER=admin
+   GRAFANA_ADMIN_PASSWORD=tu_contraseña_segura
+   ```
+
+2. Levanta el stack (se puede hacer con o sin los servicios de aplicación):
+   ```sh
+   # Solo monitorización
+   docker compose --profile monitoring up -d
+
+   # Todo el proyecto (app + monitorización)
+   docker compose --profile monitoring up -d && docker compose up -d
+   ```
+
+3. Abre Grafana en http://localhost:3001 con las credenciales configuradas.
+
+### Dashboards pre-cargados
+
+Los dashboards se aprovisionan automáticamente desde `monitoring/grafana/dashboards/`:
+
+- **Docker Containers** — CPU, RAM y red por contenedor (vía cAdvisor)
+- **Node / Host Metrics** — Métricas del host WSL (vía Node Exporter)
+- **Backend API** — req/s, latencia p50/p95, tasa de error 5xx, heap Node.js (vía `prom-client`)
+- **Logs Explorer** — Búsqueda de logs de todos los contenedores, filtrado de errores (vía Loki)
+
+### Métricas de la API (`/metrics`)
+
+El backend expone un endpoint Prometheus en `GET /metrics` gracias a `prom-client`. Las métricas disponibles incluyen:
+
+- `http_requests_total` — contador por método, ruta y código de respuesta
+- `http_request_duration_seconds` — histograma de latencia con percentiles p50/p95/p99
+- Métricas por defecto de Node.js: heap, event loop lag, GC, handles activos
+
+### Parar el stack
+
+```sh
+docker compose --profile monitoring down
+
+# Para también eliminar los datos persistentes (Prometheus, Grafana, Loki):
+docker compose --profile monitoring down -v
+```
+
+---
+
 ## Configuración de EC2 y GitHub Actions
 
 Para ejecutar este proyecto en una instancia EC2 y asegurarte de que GitHub Actions funcione correctamente, sigue estos pasos:

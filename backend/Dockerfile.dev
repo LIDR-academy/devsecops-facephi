@@ -9,6 +9,12 @@ RUN apk add --no-cache bash
 COPY package*.json ./
 RUN npm install
 
+# Copia el schema de Prisma para poder generar el cliente durante el build.
+# El volumen de código fuente lo sobreescribirá en runtime, pero el cliente
+# ya estará generado dentro de node_modules antes de montar los volúmenes.
+COPY prisma ./prisma
+RUN npx prisma generate
+
 # En desarrollo montaremos el código fuente como volumen desde el host.
 
 # Expone el puerto de la API en el contenedor
